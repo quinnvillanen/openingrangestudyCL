@@ -1,0 +1,92 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+
+# Read CSV and clean columns
+df = pd.read_csv(r'C:\Users\Looter\Downloads\sheww.csv')
+df.columns = df.columns.str.strip()
+df['DateTime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
+
+# Filter the data
+last_day = df['DateTime'].max().date()
+first_day = last_day - pd.Timedelta(days=1000)
+df = df[df['DateTime'].dt.date >= first_day]
+
+# DataFrames for opening 30 seconds and first 30 minutes
+df_30sec = df[(df['DateTime'].dt.time >= pd.Timestamp('09:00:00').time()) & (df['DateTime'].dt.time <= pd.Timestamp('09:00:29').time())]
+df_30min = df[(df['DateTime'].dt.time >= pd.Timestamp('09:00:00').time()) & (df['DateTime'].dt.time <= pd.Timestamp('09:30:00').time())]
+
+# Group the df_30min by date
+grouped = df_30min.groupby(df_30min['DateTime'].dt.date)
+
+# Populate stats with correct indentation
+stats = []
+for name, group in grouped:
+    df_day_30sec = df_30sec[df_30sec['DateTime'].dt.date == name]
+    if not df_day_30sec.empty:
+        opening_bar = df_day_30sec[df_day_30sec['DateTime'].dt.time == pd.Timestamp('09:00:00').time()]
+        if not opening_bar.empty:
+            opening_range = abs(opening_bar['High'].iloc[0] - opening_bar['Low'].iloc[0])
+            opening_volume = opening_bar['Volume'].iloc[0]
+        else:
+            opening_range = 0
+            opening_volume = 0
+    else:
+        opening_range = 0
+        opening_volume = 0
+
+    # Ensure that it's the highest of highs and the lowest of lows in first 30 minutes
+    highest_high_30min = group['High'].max()
+    lowest_low_30min = group['Low'].min()
+    first_30min_range = highest_high_30min - lowest_low_30min
+    
+    ratio = first_30min_range / opening_range if opening_range != 0 else 0
+    opening_multiple = first_30min_range / opening_range if opening_range != 0 else 0
+    
+    stats.append({
+        'Date': pd.Timestamp(name),
+        'Opening_Range': opening_range,
+        'First_30min_Range': first_30min_range,
+        'Opening_Volume': opening_volume,
+        'Ratio': ratio,
+        'Opening_Multiple': opening_multiple
+    })
+
+# Create DataFrame from stats and check columns
+df_stats = pd.DataFrame(stats)
+print(df_stats.columns)
+
+# Standardize features
+scaler = StandardScaler()
+features_for_clustering = ['Opening_Range','Opening_Volume']
+x = df_stats.loc[:, features_for_clustering].values
+x = scaler.fit_transform(x)
+
+# KMeans clustering
+kmeans = KMeans(n_clusters=4)
+kmeans.fit(x)
+df_stats['Cluster'] = kmeans.labels_
+
+# Print cluster means
+print("Cluster means:")
+print(df_stats.groupby('Cluster').mean(numeric_only=True))
+
+# Plot histograms
+sns.histplot(df_stats['Opening_Multiple'], bins=30)
+plt.title('Distribution of Opening Range Multiple')
+plt.show()
+
+sns.histplot(df_stats['First_30min_Range'], bins=30)
+plt.title('Distribution of 30-Minute Range')
+plt.show()
+
+# Scatter plots
+for feature1, feature2 in [('Opening_Range', 'First_30min_Range'), ('Opening_Range', 'Ratio'), ('Opening_Range', 'Opening_Volume'), ('First_30min_Range', 'Ratio'), ('First_30min_Range', 'Opening_Volume')]:
+    plt.scatter(df_stats[feature1], df_stats[feature2], c=df_stats['Cluster'], cmap='viridis')
+    plt.xlabel(feature1)
+    plt.ylabel(feature2)
+    plt.title(f'{feature1} vs {feature2}')
+    plt.colorbar().set_label('Cluster')
+    plt.show()
